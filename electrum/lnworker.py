@@ -350,7 +350,7 @@ class LNWallet(LNWorker):
             c = Channel(x, sweep_address=self.sweep_address, lnworker=self)
             self.channels[c.channel_id] = c
         # timestamps of opening and closing transactions
-        self.channel_timestamps = self.storage.get('lightning_channel_timestamps', {})
+        self.channel_timestamps = self.storage.db.get_dict('lightning_channel_timestamps')
         self.pending_payments = defaultdict(asyncio.Future)
 
     @ignore_exceptions
@@ -666,7 +666,6 @@ class LNWallet(LNWorker):
             if chan.short_channel_id:
                 chan.set_state(channel_states.FUNDED)
                 self.channel_timestamps[bh2u(chan.channel_id)] = chan.funding_outpoint.txid, funding_height.height, funding_height.timestamp, None, None, None
-                self.storage.put('lightning_channel_timestamps', self.channel_timestamps)
 
         if chan.get_state() == channel_states.FUNDED:
             peer = self.peers.get(chan.node_id)
@@ -700,7 +699,6 @@ class LNWallet(LNWorker):
 
         # fixme: this is wasteful
         self.channel_timestamps[bh2u(chan.channel_id)] = funding_txid, funding_height.height, funding_height.timestamp, closing_txid, closing_height.height, closing_height.timestamp
-        self.storage.put('lightning_channel_timestamps', self.channel_timestamps)
 
         # remove from channel_db
         if chan.short_channel_id is not None:

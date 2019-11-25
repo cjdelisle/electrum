@@ -29,6 +29,7 @@ import copy
 import threading
 from collections import defaultdict
 from typing import Dict, Optional, List, Tuple, Set, Iterable, NamedTuple, Sequence
+import jsonpatch
 
 from . import util, bitcoin
 from .util import profiler, WalletFileException, multisig_type, TxMinedInfo
@@ -53,12 +54,25 @@ class TxFeesValue(NamedTuple):
     num_inputs: Optional[int] = None
 
 
+class StorageDict(dict):
+
+    def __init__(self, db, path, data):
+        dict.__init__(data)
+        self.db = db
+        self.path = path
+
+    def __setitem__(self, key, value):
+        dict.__setitem__(self, key, value)
+        self.db.put(self.path + '/' + key, value)
+
+
 class JsonDB(Logger):
 
     def __init__(self, raw, *, manual_upgrades):
         Logger.__init__(self)
         self.lock = threading.RLock()
         self.data = {}
+        self.pending_changes = []
         self._modified = False
         self.manual_upgrades = manual_upgrades
         self._called_after_upgrade_tasks = False
@@ -97,22 +111,49 @@ class JsonDB(Logger):
             v = copy.deepcopy(v)
         return v
 
+    def get_dict(self, path):
+        data = self.get(path, {})
+        return StorageDict(self, path, data)
+
     @modifier
-    def put(self, key, value):
+    def put(self, path, value):
+        path = '/' + path
+        keys = path.split('/')
+        value = copy.deepcopy(value)
+        # sanity check
         try:
-            json.dumps(key, cls=JsonDBJsonEncoder)
+            for key in keys:
+                json.dumps(key, cls=JsonDBJsonEncoder)
             json.dumps(value, cls=JsonDBJsonEncoder)
         except:
-            self.logger.info(f"json error: cannot save {repr(key)} ({repr(value)})")
+            self.logger.info(f"json error: cannot save {repr(path)} ({repr(value)})")
             return False
+        # reach desired level
+        d = self.data
+        for key in keys[:-1]:
+            next_d = d.get(key)
+            if next_d is None:
+                d[key] = {}
+        key = keys[-1]
+        # update data and create patch
         if value is not None:
-            if self.data.get(key) != value:
-                self.data[key] = copy.deepcopy(value)
+            old_value = d.get(key)
+            if old_value != value:
+                d[key] = value
+                if old_value is None:
+                    self.add_patch({'op': 'add', 'path': path, 'value': value})
+                else:
+                    self.add_patch({'op': 'replace', 'path': path, 'value': value})
                 return True
-        elif key in self.data:
-            self.data.pop(key)
+        elif key in d:
+            d.pop(key)
+            self.add_patch({'op': 'remove', 'path': path})
             return True
         return False
+
+    def add_patch(self, patch):
+        print(patch)
+        self.pending_changes.append(patch)
 
     def commit(self):
         pass
@@ -123,24 +164,15 @@ class JsonDB(Logger):
 
     def load_data(self, s):
         try:
-            self.data = json.loads(s)
+            data = json.loads('[' + s + ']')
         except:
-            try:
-                d = ast.literal_eval(s)
-                labels = d.get('labels', {})
-            except Exception as e:
-                raise IOError("Cannot read wallet file")
-            self.data = {}
-            for key, value in d.items():
-                try:
-                    json.dumps(key)
-                    json.dumps(value)
-                except:
-                    self.logger.info(f'Failed to convert label to json format: {key}')
-                    continue
-                self.data[key] = value
-        if not isinstance(self.data, dict):
-            raise WalletFileException("Malformed wallet file (not dict)")
+            raise IOError("Cannot read wallet file")
+        # apply patches
+        self.data = data[0]
+        patch = jsonpatch.JsonPatch(data[1:])
+        self.data = patch.apply(self.data)
+        # set modified so that storage writes new data
+        self.set_modified(True)
 
         if not self.manual_upgrades and self.requires_split():
             raise WalletFileException("This wallet has multiple accounts and must be split")

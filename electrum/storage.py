@@ -61,7 +61,6 @@ class WalletStorage(Logger):
         self.path = standardize_path(path)
         self._file_exists = self.path and os.path.exists(self.path)
 
-        DB_Class = JsonDB
         self.logger.info(f"wallet path {self.path}")
         self.pubkey = None
         self._test_read_write_permissions(self.path)
@@ -70,7 +69,8 @@ class WalletStorage(Logger):
                 self.raw = f.read()
             self._encryption_version = self._init_encryption_version()
             if not self.is_encrypted():
-                self.db = DB_Class(self.raw, manual_upgrades=manual_upgrades)
+                self.db = JsonDB(self.raw, manual_upgrades=manual_upgrades)
+                self._write()
                 self.load_plugins()
         else:
             self._encryption_version = StorageEncryptionVersion.PLAINTEXT
@@ -113,7 +113,21 @@ class WalletStorage(Logger):
     @profiler
     def write(self):
         with self.lock:
-            self._write()
+            self._write_pending_changes()
+
+    def _write_pending_changes(self):
+        if threading.currentThread().isDaemon():
+            self.logger.warning('daemon thread cannot write db')
+            return
+        import json
+        if not self.db.pending_changes:
+            return
+        s = ''.join([',\n' + json.dumps(x) for x in self.db.pending_changes])
+        with open(self.path, "a", encoding='utf-8') as f:
+            f.write(s)
+            f.flush()
+            os.fsync(f.fileno())
+        self.db.pending_changes = []
 
     def _write(self):
         if threading.currentThread().isDaemon():
@@ -212,6 +226,7 @@ class WalletStorage(Logger):
         self.pubkey = ec_key.get_public_key_hex()
         s = s.decode('utf8')
         self.db = JsonDB(s, manual_upgrades=True)
+        self._write()
         self.load_plugins()
 
     def encrypt_before_writing(self, plaintext: str) -> str:
