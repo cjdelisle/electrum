@@ -8,5 +8,10 @@
         "pruning": "-",
         "s": "64767",
         "version": "1.2"
+    },
+    "pkt-ex-proxy.pkt.world": {
+        "pruning": "-",
+        "s": "64767",
+        "version": "1.2"
     }
 }
