@@ -117,7 +117,7 @@ def multi_combine(transactions_bin, outfile, config):
                 " transactions but " + str(i-1) + " has " + str(txcount))
         txcount = len(transactions_bin[i])
         transactions_bin[i].sort()
-    numsigners = 2
+    numsigners = 10
     if 'numsigners' in config:
         numsigners = config['numsigners']
     pids = []
@@ -202,7 +202,7 @@ def sign_txns(config, txns, outfile):
     w = wallet(ks)
     key = password_stretch(passwd, config)
     f = open(outfile, 'w')
-    numsigners = 2
+    numsigners = 10
     if 'numsigners' in config:
         numsigners = config['numsigners']
     pids = []
@@ -304,6 +304,10 @@ def mk_config():
     print()
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == 'redeemscript':
+       w = wallet()
+       print(w.get_redeem_script(NS_ADDRESS))
+       return
     if not os.path.exists(CONFIG_FILE):
         mk_config()
     f = open(CONFIG_FILE, 'r')
